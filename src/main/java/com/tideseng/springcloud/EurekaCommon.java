@@ -1,21 +1,30 @@
 package com.tideseng.springcloud;
 
-import com.netflix.appinfo.ApplicationInfoManager;
-import com.netflix.discovery.EurekaClient;
-import com.netflix.discovery.EurekaClientConfig;
-import com.netflix.eureka.DefaultEurekaServerContext;
-import com.netflix.eureka.EurekaServerConfig;
-import com.netflix.eureka.EurekaServerContext;
-import com.netflix.eureka.cluster.PeerEurekaNodes;
-import com.netflix.eureka.registry.PeerAwareInstanceRegistry;
+import com.netflix.appinfo.*;
+import com.netflix.discovery.*;
+import com.netflix.eureka.*;
+import com.netflix.eureka.cluster.*;
+import com.netflix.eureka.registry.*;
 import org.springframework.cloud.netflix.eureka.server.*;
+import javax.servlet.*;
 import java.util.*;
 
 import java.lang.annotation.Annotation;
+import java.util.concurrent.ScheduledExecutorService;
 
 /**
- * Eureka Server端功能：服务启动、服务同步、服务剔除、自我保护
- * Eureka Client端功能：服务启动、服务注册、服务续约、服务下线
+ * 注册中心产生背景:
+ *      服务提供者的上下线需要服务调用者动态感知，减少服务调用地址的维护工作
+ * Eureka实现原理:
+ *      引入第三方服务注册中心节点，其它服务将地址提交给第三方，使其管理所有的服务地址，服务调用者从第三方获取服务提供者地址列表
+ * Eureka功能:
+ *      Eureka Server端功能：服务启动、服务同步、服务剔除、自我保护、三级缓存
+ *      Eureka Client端功能：服务启动、服务注册、服务续约、服务下线
+ * 注册中心差异点:
+ *      高可用机制（CAP特性、一致性问题）
+ *      API调用方式
+ *      存储方式
+ *      通知方式
  * @author jiahuan
  * @create 2022/5/26
  */
@@ -36,9 +45,11 @@ public class EurekaCommon {
          *          初始化{@link PeerAwareInstanceRegistry}、{@link PeerEurekaNodes}、{@link EurekaServerContext}、{@link EurekaServerBootstrap}
          *          导入{@link EurekaServerInitializerConfiguration}
          * 3.DefaultEurekaServerContext对象初始化完毕后调用@PostConstruct修饰的{@link DefaultEurekaServerContext#initialize()}方法初始化上下文
-         *      {@link DefaultEurekaServerContext#initialize()}
-         *          {@link PeerEurekaNodes#start()} >> {@link PeerEurekaNodes#updatePeerEurekaNodes(List)}
-         *          {@link PeerAwareInstanceRegistry#init(PeerEurekaNodes)}
+         *      {@link DefaultEurekaServerContext#initialize()}初始化Eureka Server上下文
+         *          {@link PeerEurekaNodes#start()}初始化集群节点列表并开启定时任务 >> {@link PeerEurekaNodes#updatePeerEurekaNodes(List)}根据集群节点地址列表初始化集群节点列表 >> scheduleWithFixedDelay定时每隔10分钟更新集群节点列表
+         *          {@link PeerAwareInstanceRegistryImpl#init(PeerEurekaNodes)}初始化ResponseCacheImpl缓存并启动定时器更新自我保护阈值 >> {@link AbstractInstanceRegistry#initializedResponseCache()}初始化本地缓存类 >> {@link PeerAwareInstanceRegistryImpl#scheduleRenewalThresholdUpdateTask()}开启每隔15分钟更新每分钟续约因子阈值
+         * 4.EurekaServerInitializerConfiguration基于lifecycle回调start方法初始化Eureka Server并启动
+         *      {@link EurekaServerInitializerConfiguration#start()} >> {@link EurekaServerBootstrap#contextInitialized(ServletContext)} >> {@link EurekaServerBootstrap#initEurekaEnvironment()} >> {@link EurekaServerBootstrap#initEurekaServerContext()}
          */
         public void bootstrap() throws Exception {
             // 1.启动类添加@EnableEurekaServer注解，导入EurekaServerMarkerConfiguration，初始化EurekaServerMarkerConfiguration.Marker
@@ -61,7 +72,6 @@ public class EurekaCommon {
             eurekaServerContext.initialize();
             peerEurekaNodes.start();
             peerAwareInstanceRegistry.init(peerEurekaNodes);
-
         }
 
     }
