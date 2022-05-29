@@ -6,6 +6,8 @@ import com.netflix.eureka.*;
 import com.netflix.eureka.cluster.*;
 import com.netflix.eureka.registry.*;
 import org.springframework.cloud.netflix.eureka.server.*;
+import org.springframework.cloud.netflix.eureka.server.InstanceRegistry;
+
 import javax.servlet.*;
 import java.util.*;
 
@@ -49,7 +51,8 @@ public class EurekaCommon {
          *          {@link PeerEurekaNodes#start()}初始化集群节点列表并开启定时任务 >> {@link PeerEurekaNodes#updatePeerEurekaNodes(List)}根据集群节点地址列表初始化集群节点列表 >> scheduleWithFixedDelay定时每隔10分钟更新集群节点列表
          *          {@link PeerAwareInstanceRegistryImpl#init(PeerEurekaNodes)}初始化ResponseCacheImpl缓存并启动定时器更新自我保护阈值 >> {@link AbstractInstanceRegistry#initializedResponseCache()}初始化本地缓存类 >> {@link PeerAwareInstanceRegistryImpl#scheduleRenewalThresholdUpdateTask()}开启每隔15分钟更新每分钟续约因子阈值
          * 4.EurekaServerInitializerConfiguration基于lifecycle回调start方法初始化Eureka Server并启动
-         *      {@link EurekaServerInitializerConfiguration#start()} >> {@link EurekaServerBootstrap#contextInitialized(ServletContext)} >> {@link EurekaServerBootstrap#initEurekaEnvironment()} >> {@link EurekaServerBootstrap#initEurekaServerContext()}
+         *      {@link EurekaServerInitializerConfiguration#start()}异步启动Eureka Server >> {@link EurekaServerBootstrap#contextInitialized(ServletContext)} >> {@link EurekaServerBootstrap#initEurekaEnvironment()}初始化Eureka的环境变量 >> {@link EurekaServerBootstrap#initEurekaServerContext()} >>
+         *      {@link PeerAwareInstanceRegistryImpl#syncUp()} >> {@link InstanceRegistry#openForTraffic(ApplicationInfoManager, int)} >> {@link PeerAwareInstanceRegistryImpl#openForTraffic(ApplicationInfoManager, int)}
          */
         public void bootstrap() throws Exception {
             // 1.启动类添加@EnableEurekaServer注解，导入EurekaServerMarkerConfiguration，初始化EurekaServerMarkerConfiguration.Marker
