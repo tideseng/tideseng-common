@@ -2,18 +2,23 @@ package com.tideseng.springcloud;
 
 import com.netflix.appinfo.*;
 import com.netflix.discovery.*;
+import com.netflix.discovery.shared.resolver.*;
 import com.netflix.eureka.*;
 import com.netflix.eureka.cluster.*;
 import com.netflix.eureka.registry.*;
+import com.netflix.eureka.resources.*;
 import com.netflix.appinfo.InstanceInfo.*;
+
+import org.springframework.cloud.netflix.eureka.*;
 import org.springframework.cloud.netflix.eureka.server.*;
 import org.springframework.cloud.netflix.eureka.server.InstanceRegistry;
+import org.springframework.cloud.netflix.eureka.serviceregistry.*;
 
-import javax.servlet.*;
+import java.lang.annotation.*;
 import java.util.*;
-
-import java.lang.annotation.Annotation;
-import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.*;
+import javax.inject.*;
+import javax.servlet.*;
 
 /**
  * 注册中心产生背景:
@@ -91,6 +96,55 @@ public class EurekaCommon {
             eurekaServerBootstrap.getClass().getDeclaredMethod("initEurekaServerContext").invoke(eurekaServerBootstrap);
             int registryCount = peerAwareInstanceRegistry.syncUp();
             peerAwareInstanceRegistry.openForTraffic(null, registryCount);
+        }
+
+    }
+
+    /**
+     * Eureka Client端功能：服务启动、服务注册、服务续约、服务下线
+     */
+    class EurekaClien {
+
+        /**
+         * 服务注册
+         * 一、Eureka Client发起注册
+         * 1.spring-cloud-netflix-eureka-client依赖包下META-INF/spring.factories文件的EnableAutoConfiguration属性会加载{@link EurekaClientAutoConfiguration}类
+         *      spring.factories扩展点 >> 加载{@link EurekaClientAutoConfiguration}
+         *          初始化{@link EurekaAutoServiceRegistration}自动服务注册类、{@link EurekaServiceRegistry}服务注册接口实现类、{@link CloudEurekaClient}、{@link ApplicationInfoManager}、{@link EurekaRegistration}
+         * 2.{@link DiscoveryClient#DiscoveryClient(ApplicationInfoManager, EurekaClientConfig, AbstractDiscoveryClientOptionalArgs, Provider, EndpointRandomizer)}构造函数
+         *      针对{@link DiscoveryClient#localRegionApps}全局变量调用set(new Applications())方法，初始化Applications并缓存到全局变量中
+         *      当Eureka CLient配置为不注册到Eureka Server且不从Eureka Server获取注册信息时，直接返回
+         *      创建scheduler、heartbeatExecutor、cacheRefreshExecutor线程池，scheduler用于处理定时任务、heartbeatExecutor用于执行心跳续约、cacheRefreshExecutor用于刷新服务注册信息
+         *      当Eureka CLient配置为从Eureka Server获取注册信息时
+         *          {@link DiscoveryClient#fetchRegistry(boolean)}全量获取服务注册信息
+         *      {@link DiscoveryClient#initScheduledTasks()}初始化定时任务
+         *          当Eureka CLient配置为从Eureka Server获取注册信息时
+         *              开启每30秒执行刷新服务注册信息的定时任务（缓存刷新）
+         *          当Eureka CLient配置为注册到Eureka Server时
+         *              开启每30秒执行心跳续约的定时任务（心跳续约）
+         *              {@link InstanceInfoReplicator#InstanceInfoReplicator(DiscoveryClient, InstanceInfo, int, int)}创建实例信息复制器
+         *              {@link ApplicationInfoManager.StatusChangeListener}创建实例状态变化监听
+         *              {@link ApplicationInfoManager#registerStatusChangeListener(ApplicationInfoManager.StatusChangeListener)}注册实例状态变化监听
+         *              {@link InstanceInfoReplicator#start(int)}开启实例信息复制器周期性任务，当实例信息变更时重新发起注册（首次进来会发起注册）
+         * 3.EurekaAutoServiceRegistration基于lifecycle回调start方法发布实例事件
+         *      {@link EurekaAutoServiceRegistration#start()}
+         * 二、Eureka Server处理请求
+         *      {@link ApplicationResource#addInstance(InstanceInfo, String)}处理请求
+         * 三、Eureka Server存储服务地址
+         */
+        public void register() throws Exception {
+            EurekaClientAutoConfiguration eurekaClientAutoConfiguration = new EurekaClientAutoConfiguration(null);
+            EurekaClientConfigBean clientConfig = eurekaClientAutoConfiguration.eurekaClientConfigBean(null);
+
+            DiscoveryClient discoveryClient = new DiscoveryClient(null, null, null, null);
+            if (!clientConfig.shouldRegisterWithEureka() && !clientConfig.shouldFetchRegistry()) {
+                return;
+            }
+
+            if (clientConfig.shouldFetchRegistry()) {
+
+            }
+
         }
 
     }
