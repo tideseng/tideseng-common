@@ -5,6 +5,7 @@ import com.netflix.discovery.*;
 import com.netflix.discovery.shared.resolver.*;
 import com.netflix.eureka.*;
 import com.netflix.eureka.cluster.*;
+import com.netflix.eureka.lease.Lease;
 import com.netflix.eureka.registry.*;
 import com.netflix.eureka.resources.*;
 import com.netflix.appinfo.InstanceInfo.*;
@@ -13,10 +14,13 @@ import org.springframework.cloud.netflix.eureka.*;
 import org.springframework.cloud.netflix.eureka.server.*;
 import org.springframework.cloud.netflix.eureka.server.InstanceRegistry;
 import org.springframework.cloud.netflix.eureka.serviceregistry.*;
+import org.springframework.context.support.*;
+import org.springframework.context.*;
 
 import java.lang.annotation.*;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.locks.*;
 import javax.inject.*;
 import javax.servlet.*;
 
@@ -112,25 +116,41 @@ public class EurekaCommon {
          *      spring.factories扩展点 >> 加载{@link EurekaClientAutoConfiguration}
          *          初始化{@link EurekaAutoServiceRegistration}自动服务注册类、{@link EurekaServiceRegistry}服务注册接口实现类、{@link CloudEurekaClient}、{@link ApplicationInfoManager}、{@link EurekaRegistration}
          * 2.{@link DiscoveryClient#DiscoveryClient(ApplicationInfoManager, EurekaClientConfig, AbstractDiscoveryClientOptionalArgs, Provider, EndpointRandomizer)}构造函数
-         *      针对{@link DiscoveryClient#localRegionApps}全局变量调用set(new Applications())方法，初始化Applications并缓存到全局变量中
-         *      当Eureka CLient配置为不注册到Eureka Server且不从Eureka Server获取注册信息时，直接返回
+         *      对{@link DiscoveryClient#localRegionApps}全局变量调用set(new Applications())方法进行赋值，初始化Applications并缓存到全局变量中
+         *      当shouldRegisterWithEureka=false && shouldFetchRegistry=false，即Eureka CLient配置为不注册到Eureka Server且不从Eureka Server获取注册信息时，直接返回
          *      创建scheduler、heartbeatExecutor、cacheRefreshExecutor线程池，scheduler用于处理定时任务、heartbeatExecutor用于执行心跳续约、cacheRefreshExecutor用于刷新服务注册信息
-         *      当Eureka CLient配置为从Eureka Server获取注册信息时
+         *      当shouldFetchRegistry=true，即Eureka CLient配置为从Eureka Server获取注册信息时
          *          {@link DiscoveryClient#fetchRegistry(boolean)}全量获取服务注册信息
          *      {@link DiscoveryClient#initScheduledTasks()}初始化定时任务
-         *          当Eureka CLient配置为从Eureka Server获取注册信息时
+         *          当shouldFetchRegistry=false，即Eureka CLient配置为从Eureka Server获取注册信息时
          *              开启每30秒执行刷新服务注册信息的定时任务（缓存刷新）
-         *          当Eureka CLient配置为注册到Eureka Server时
+         *          当shouldRegisterWithEureka=false，即Eureka CLient配置为注册到Eureka Server时
          *              开启每30秒执行心跳续约的定时任务（心跳续约）
          *              {@link InstanceInfoReplicator#InstanceInfoReplicator(DiscoveryClient, InstanceInfo, int, int)}创建实例信息复制器
          *              {@link ApplicationInfoManager.StatusChangeListener}创建实例状态变化监听
          *              {@link ApplicationInfoManager#registerStatusChangeListener(ApplicationInfoManager.StatusChangeListener)}注册实例状态变化监听
-         *              {@link InstanceInfoReplicator#start(int)}开启实例信息复制器周期性任务，当实例信息变更时重新发起注册（首次进来会发起注册）
+         *              {@link InstanceInfoReplicator#start(int)}开启实例信息复制器周期性任务，当实例信息变更时重新发起注册（首次进来会延迟40秒发起注册） >> {@link InstanceInfoReplicator#run()}线程run()方法 >> {@link DiscoveryClient#register()}发起注册请求
          * 3.EurekaAutoServiceRegistration基于lifecycle回调start方法发布实例事件
          *      {@link EurekaAutoServiceRegistration#start()}
+         *          {@link EurekaServiceRegistry#register(EurekaRegistration)}发起服务注册机制
+         *              {@link ApplicationInfoManager#setInstanceStatus(InstanceStatus)}发布实例状态变化事件
+         *                  {@link ApplicationInfoManager.StatusChangeListener#notify(StatusChangeEvent)}实例状态变化监听
+         *                      {@link InstanceInfoReplicator#onDemandUpdate()}实例状态变化，异步提交任务执行run方法 >> {@link InstanceInfoReplicator#run()}线程run()方法 >> {@link DiscoveryClient#register()}发起注册请求
+         *          {@link AbstractApplicationContext#publishEvent(ApplicationEvent)}发布实例注册事件
          * 二、Eureka Server处理请求
-         *      {@link ApplicationResource#addInstance(InstanceInfo, String)}处理请求
+         *      {@link ApplicationResource#addInstance(InstanceInfo, String)}处理服务注册请求
+         *          {@link InstanceRegistry#register(InstanceInfo, boolean)}服务注册 >> {@link PeerAwareInstanceRegistryImpl#register(InstanceInfo, boolean)}服务注册
+         *              {@link AbstractInstanceRegistry#register(InstanceInfo, int, boolean)}服务注册逻辑
+         *              {@link PeerAwareInstanceRegistryImpl#replicateToPeers(PeerAwareInstanceRegistryImpl.Action, String, String, InstanceInfo, InstanceInfo.InstanceStatus, boolean)}服务同步逻辑（详见服务同步）
          * 三、Eureka Server存储服务地址
+         *      {@link AbstractInstanceRegistry#register(InstanceInfo, int, boolean)}
+         *          {@link ReentrantReadWriteLock.ReadLock#lock()}对读锁加锁
+         *          {@link AbstractInstanceRegistry#registry}根据实例信息的用户名从registry一级缓存中获取map对象，不存在时创建 （registry变量结构：ConcurrentHashMap<String, Map<String, Lease<InstanceInfo>>>）
+         *          {@link gMap.get(registrant.getId())}根据实例Id获取实例信息，不存在时调用{@link AbstractInstanceRegistry#updateRenewsPerMinThreshold()}更新服务续约阈值
+         *          {@link Lease#Lease(Object, int)}构建新的Lease(封装了InstanceInfo)
+         *          {@link gMap.put(registrant.getId(), lease)}更新map中的实例映射
+         *          {@link AbstractInstanceRegistry#invalidateCache(String, String, String)}让二级缓存失效 >> {@link ResponseCacheImpl#invalidate(String, String, String)}让二级缓存失效 >> {@link ResponseCacheImpl#invalidate(Key...)}让二级缓存失效
+         *          {@link ReentrantReadWriteLock.ReadLock#unlock()}读锁释放锁
          */
         public void register() throws Exception {
             EurekaClientAutoConfiguration eurekaClientAutoConfiguration = new EurekaClientAutoConfiguration(null);
