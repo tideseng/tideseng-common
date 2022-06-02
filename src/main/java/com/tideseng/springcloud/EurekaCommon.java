@@ -3,6 +3,7 @@ package com.tideseng.springcloud;
 import com.netflix.appinfo.*;
 import com.netflix.discovery.*;
 import com.netflix.discovery.shared.resolver.*;
+import com.netflix.discovery.shared.transport.jersey.*;
 import com.netflix.eureka.*;
 import com.netflix.eureka.cluster.*;
 import com.netflix.eureka.lease.Lease;
@@ -10,6 +11,7 @@ import com.netflix.eureka.registry.*;
 import com.netflix.eureka.resources.*;
 import com.netflix.appinfo.InstanceInfo.*;
 
+import com.netflix.eureka.util.*;
 import org.springframework.cloud.netflix.eureka.*;
 import org.springframework.cloud.netflix.eureka.server.*;
 import org.springframework.cloud.netflix.eureka.server.InstanceRegistry;
@@ -125,7 +127,7 @@ public class EurekaCommon {
          *          当shouldFetchRegistry=false，即Eureka CLient配置为从Eureka Server获取注册信息时
          *              开启每30秒执行刷新服务注册信息的定时任务（缓存刷新）
          *          当shouldRegisterWithEureka=false，即Eureka CLient配置为注册到Eureka Server时
-         *              开启每30秒执行心跳续约的定时任务（心跳续约）
+         *              开启每30秒执行心跳续约的定时任务{@link DiscoveryClient.HeartbeatThread}（详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClien#renew}）
          *              {@link InstanceInfoReplicator#InstanceInfoReplicator(DiscoveryClient, InstanceInfo, int, int)}创建实例信息复制器
          *              {@link ApplicationInfoManager.StatusChangeListener}创建实例状态变化监听
          *              {@link ApplicationInfoManager#registerStatusChangeListener(ApplicationInfoManager.StatusChangeListener)}注册实例状态变化监听
@@ -135,13 +137,13 @@ public class EurekaCommon {
          *          {@link EurekaServiceRegistry#register(EurekaRegistration)}发起服务注册机制
          *              {@link ApplicationInfoManager#setInstanceStatus(InstanceStatus)}发布实例状态变化事件
          *                  {@link ApplicationInfoManager.StatusChangeListener#notify(StatusChangeEvent)}实例状态变化监听
-         *                      {@link InstanceInfoReplicator#onDemandUpdate()}实例状态变化，异步提交任务执行run方法 >> {@link InstanceInfoReplicator#run()}线程run()方法 >> {@link DiscoveryClient#register()}发起注册请求
+         *                      {@link InstanceInfoReplicator#onDemandUpdate()}实例状态变化，异步提交任务执行run方法 >> {@link InstanceInfoReplicator#run()}线程run()方法 >> {@link DiscoveryClient#register()}发起注册请求 >> {@link AbstractJerseyEurekaHttpClient#register(InstanceInfo)}发起注册请求
          *          {@link AbstractApplicationContext#publishEvent(ApplicationEvent)}发布实例注册事件
          * 二、Eureka Server处理请求
          *      {@link ApplicationResource#addInstance(InstanceInfo, String)}处理服务注册请求
          *          {@link InstanceRegistry#register(InstanceInfo, boolean)}服务注册 >> {@link PeerAwareInstanceRegistryImpl#register(InstanceInfo, boolean)}服务注册
          *              {@link AbstractInstanceRegistry#register(InstanceInfo, int, boolean)}服务注册逻辑
-         *              {@link PeerAwareInstanceRegistryImpl#replicateToPeers(PeerAwareInstanceRegistryImpl.Action, String, String, InstanceInfo, InstanceInfo.InstanceStatus, boolean)}服务同步逻辑（详见服务同步）
+         *              {@link PeerAwareInstanceRegistryImpl#replicateToPeers(PeerAwareInstanceRegistryImpl.Action, String, String, InstanceInfo, InstanceStatus, boolean)}服务同步逻辑（详见服务同步）
          * 三、Eureka Server存储服务地址
          *      {@link AbstractInstanceRegistry#register(InstanceInfo, int, boolean)}
          *          {@link ReentrantReadWriteLock.ReadLock#lock()}对读锁加锁
@@ -164,6 +166,34 @@ public class EurekaCommon {
             if (clientConfig.shouldFetchRegistry()) {
 
             }
+
+        }
+
+        /**
+         * 服务续约
+         * 一、Eureka Client发起续约
+         * {@link DiscoveryClient#initScheduledTasks()}初始化定时任务
+         *      当shouldRegisterWithEureka=false，即Eureka CLient配置为注册到Eureka Server时
+         *          开启每30秒执行心跳续约的定时任务{@link DiscoveryClient.HeartbeatThread} >> {@link DiscoveryClient.HeartbeatThread#run()}
+         *              {@link DiscoveryClient#renew()}发起续约
+         *                  {@link AbstractJerseyEurekaHttpClient#sendHeartBeat(String, String, InstanceInfo, InstanceStatus)}发起续约请求
+         *                  当续约请求响应404表示未注册时，走注册流程{@link DiscoveryClient#register()} >> {@link AbstractJerseyEurekaHttpClient#register(InstanceInfo)}发起注册请求
+         *              {@link DiscoveryClient#lastSuccessfulHeartbeatTimestamp} 将lastSuccessfulHeartbeatTimestamp最后一次心跳续约时间设置为当前时间
+         * 二、Eureka Server处理请求
+         *      {@link InstanceResource#renewLease(String, String, String, String)}处理服务续约请求
+         *          {@link InstanceRegistry#renew(String, String, boolean)} >> {@link PeerAwareInstanceRegistryImpl#renew(String, String, boolean)}
+         *              {@link AbstractInstanceRegistry#renew(String, String, boolean)}服务续约逻辑
+         *                  {@link registry.get(appName)}根据应用名获取map信息 >> {@link gMap.get(id)}根据实例Id获取实例信息（1.当实例不存在时返回404让客户端重新发起注册）
+         *                  {@link AbstractInstanceRegistry#getOverriddenInstanceStatus(InstanceInfo, Lease, boolean)}获取服务端实例的status（2.当服务端的instance的status为UNKONW时返回404让客户端重新发起注册）
+         *                  {@link MeasuredRate#increment()}设置每分钟的续约次数
+         *                  {@link Lease#renew()}更新lease续约时间
+         *              {@link PeerAwareInstanceRegistryImpl#replicateToPeers(PeerAwareInstanceRegistryImpl.Action, String, String, InstanceInfo, InstanceStatus, boolean)}服务同步逻辑（详见服务同步）
+         *          {@link InstanceResource#validateDirtyTimestamp(Long, boolean)}验证客户端lastDirtyTimestamp和本地lastDirtyTimestamp
+         *              {@link AbstractInstanceRegistry#getInstanceByAppAndId(String, String, boolean)}根据应用名和实例ID获取本地instance实例信息
+         *              当lastDirtyTimestamp > appInfo.getLastDirtyTimestamp()时返回404让客户端重新发起注册（3）
+         *              当lastDirtyTimestamp < appInfo.getLastDirtyTimestamp() 且是集群同步请求时，则返回"冲突"状态以本地的时间大的为准
+         */
+        public void renew() throws Exception {
 
         }
 
