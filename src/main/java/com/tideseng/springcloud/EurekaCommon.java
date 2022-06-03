@@ -1,7 +1,9 @@
 package com.tideseng.springcloud;
 
 import com.netflix.appinfo.*;
+import com.netflix.appinfo.InstanceInfo.*;
 import com.netflix.discovery.*;
+import com.netflix.discovery.shared.*;
 import com.netflix.discovery.shared.resolver.*;
 import com.netflix.discovery.shared.transport.jersey.*;
 import com.netflix.eureka.*;
@@ -9,9 +11,8 @@ import com.netflix.eureka.cluster.*;
 import com.netflix.eureka.lease.Lease;
 import com.netflix.eureka.registry.*;
 import com.netflix.eureka.resources.*;
-import com.netflix.appinfo.InstanceInfo.*;
-
 import com.netflix.eureka.util.*;
+
 import org.springframework.cloud.netflix.eureka.*;
 import org.springframework.cloud.netflix.eureka.server.*;
 import org.springframework.cloud.netflix.eureka.server.InstanceRegistry;
@@ -122,11 +123,11 @@ public class EurekaCommon {
          *      当shouldRegisterWithEureka=false && shouldFetchRegistry=false，即Eureka CLient配置为不注册到Eureka Server且不从Eureka Server获取注册信息时，直接返回
          *      创建scheduler、heartbeatExecutor、cacheRefreshExecutor线程池，scheduler用于处理定时任务、heartbeatExecutor用于执行心跳续约、cacheRefreshExecutor用于刷新服务注册信息
          *      当shouldFetchRegistry=true，即Eureka CLient配置为从Eureka Server获取注册信息时
-         *          {@link DiscoveryClient#fetchRegistry(boolean)}全量获取服务注册信息
+         *          {@link DiscoveryClient#fetchRegistry(boolean)}全量获取服务注册信息（详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClien#discovery}）
          *      {@link DiscoveryClient#initScheduledTasks()}初始化定时任务
-         *          当shouldFetchRegistry=false，即Eureka CLient配置为从Eureka Server获取注册信息时
-         *              开启每30秒执行刷新服务注册信息的定时任务（缓存刷新）
-         *          当shouldRegisterWithEureka=false，即Eureka CLient配置为注册到Eureka Server时
+         *          当shouldFetchRegistry=true，即Eureka CLient配置为从Eureka Server获取注册信息时
+         *              开启每30秒执行刷新服务注册信息的定时任务{@link DiscoveryClient.CacheRefreshThread}（详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClien#discovery}）
+         *          当shouldRegisterWithEureka=true，即Eureka CLient配置为注册到Eureka Server时
          *              开启每30秒执行心跳续约的定时任务{@link DiscoveryClient.HeartbeatThread}（详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClien#renew}）
          *              {@link InstanceInfoReplicator#InstanceInfoReplicator(DiscoveryClient, InstanceInfo, int, int)}创建实例信息复制器
          *              {@link ApplicationInfoManager.StatusChangeListener}创建实例状态变化监听
@@ -195,6 +196,52 @@ public class EurekaCommon {
          */
         public void renew() throws Exception {
 
+        }
+
+        /**
+         * 服务发现/获取
+         * 一、Eureka Client启动发起全量获取
+         * {@link DiscoveryClient#DiscoveryClient(ApplicationInfoManager, EurekaClientConfig, AbstractDiscoveryClientOptionalArgs, Provider, EndpointRandomizer)}构造函数
+         *      当shouldFetchRegistry=true，即Eureka CLient配置为从Eureka Server获取注册信息时
+         *          {@link DiscoveryClient#fetchRegistry(boolean)}全量获取服务注册信息（当设置了禁用增量刷新、强制全量刷新、配置VIP地址、本地缓存为空、缓存服务数量为0、第一次获取等的时候，进行全量获取）
+         * 二、Eureka Client定时发起增量获取
+         * {@link DiscoveryClient#DiscoveryClient(ApplicationInfoManager, EurekaClientConfig, AbstractDiscoveryClientOptionalArgs, Provider, EndpointRandomizer)}构造函数
+         * {@link DiscoveryClient#initScheduledTasks()}初始化定时任务
+         *      当shouldFetchRegistry=true，即Eureka CLient配置为从Eureka Server获取注册信息时，开启每30秒执行刷新服务注册信息的定时任务{@link DiscoveryClient.CacheRefreshThread}
+         *          {@link DiscoveryClient.CacheRefreshThread#run()} >> {@link DiscoveryClient#refreshRegistry()}获取服务列表
+         *              {@link DiscoveryClient#fetchRegistry(boolean)} // 服务获取逻辑
+         *                  {@link DiscoveryClient#getAndStoreFullRegistry()}全量刷新
+         *                      {@link AbstractJerseyEurekaHttpClient#getApplications(String...)}发起全量获取请求
+         *                      {@link DiscoveryClient#filterAndShuffle(Applications)} >> {@link Applications#shuffleInstances(boolean, boolean, Map, EurekaClientConfig, InstanceRegionChecker)}根据shouldFilterOnlyUpInstances配置默认清除非UP状态的实例
+         *                      {@link localRegionApps.set()}将可用的服务设置到本地缓存中（使用AtomicReference类型做存储）
+         *                  {@link DiscoveryClient#getAndUpdateDelta(Applications)}增量刷新
+         *                      {@link AbstractJerseyEurekaHttpClient#getDelta(String...)}发起增量获取请求
+         *                      当增量为空时则全量刷新一次
+         *                      当增量不为空时将增量合并到本地缓存
+         *                          {@link DiscoveryClient#updateDelta(Applications)}
+         *                          {@link DiscoveryClient#getReconcileHashCode(Applications)}计算hashCode
+         *                          {@link DiscoveryClient#reconcileAndLogDifference(Applications, String)}
+         *                  {@link DiscoveryClient#onCacheRefreshed()}发布缓存刷新事件
+         *                  {@link DiscoveryClient#updateInstanceRemoteStatus()}更新本地应用状态
+         *              {@link DiscoveryClient#lastSuccessfulRegistryFetchTimestamp} 将lastSuccessfulRegistryFetchTimestamp最后一次服务获取时间设置为当前时间
+         * 三、Eureka Server处理请求
+         * {@link ApplicationsResource#getContainers(String, String, String,String, javax.ws.rs.core.UriInfo, String)}
+         *      {@link ResponseCacheImpl#getGZIP(com.netflix.eureka.registry.Key)}
+         * 四、Eureka Client发起远程调用
+         *      {@link DynamicServerListLoadBalancer#updateListOfServers()}
+         *          {@link DiscoveryEnabledNIWSServerList#getUpdatedListOfServers()} >> {@link DiscoveryEnabledNIWSServerList#obtainServersViaDiscovery()}
+         *              {@link DiscoveryClient#getInstancesByVipAddress(java.lang.String, boolean, java.lang.String)}
+         *                  {@link this.localRegionApps.get()}
+         */
+        public void discovery() throws Exception {
+            // 服务上线最长感知时间是90s（服务延迟）
+            // readOnly是30s同步一次、client每30sfetch一次、ribbon每30s更新一次serverList
+            // responseCacheUpdateIntervalMs、registryFetchIntervalSeconds、serverListRefreshInterval
+
+            // 服务下线感知
+            // 正常下线同上
+            // 非正常下线无限趋近于240s
+            // server 每60s清理超过90s未续约得服务 60 + 90 + 90
         }
 
     }
