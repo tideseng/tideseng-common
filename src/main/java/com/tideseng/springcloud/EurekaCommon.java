@@ -10,8 +10,11 @@ import com.netflix.eureka.*;
 import com.netflix.eureka.cluster.*;
 import com.netflix.eureka.lease.Lease;
 import com.netflix.eureka.registry.*;
+import com.netflix.eureka.registry.Key.*;
 import com.netflix.eureka.resources.*;
 import com.netflix.eureka.util.*;
+import com.netflix.loadbalancer.*;
+import com.netflix.niws.loadbalancer.*;
 
 import org.springframework.cloud.netflix.eureka.*;
 import org.springframework.cloud.netflix.eureka.server.*;
@@ -26,6 +29,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.locks.*;
 import javax.inject.*;
 import javax.servlet.*;
+import javax.ws.rs.core.*;
 
 /**
  * 注册中心产生背景:
@@ -110,7 +114,7 @@ public class EurekaCommon {
     /**
      * Eureka Client端功能：服务启动、服务注册、服务续约、服务下线
      */
-    class EurekaClien {
+    class EurekaClient {
 
         /**
          * 服务注册
@@ -123,12 +127,12 @@ public class EurekaCommon {
          *      当shouldRegisterWithEureka=false && shouldFetchRegistry=false，即Eureka CLient配置为不注册到Eureka Server且不从Eureka Server获取注册信息时，直接返回
          *      创建scheduler、heartbeatExecutor、cacheRefreshExecutor线程池，scheduler用于处理定时任务、heartbeatExecutor用于执行心跳续约、cacheRefreshExecutor用于刷新服务注册信息
          *      当shouldFetchRegistry=true，即Eureka CLient配置为从Eureka Server获取注册信息时
-         *          {@link DiscoveryClient#fetchRegistry(boolean)}全量获取服务注册信息（详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClien#discovery}）
+         *          {@link DiscoveryClient#fetchRegistry(boolean)}全量获取服务注册信息（详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClient#discovery}）
          *      {@link DiscoveryClient#initScheduledTasks()}初始化定时任务
          *          当shouldFetchRegistry=true，即Eureka CLient配置为从Eureka Server获取注册信息时
-         *              开启每30秒执行刷新服务注册信息的定时任务{@link DiscoveryClient.CacheRefreshThread}（详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClien#discovery}）
+         *              开启每30秒执行刷新服务注册信息的定时任务{@link DiscoveryClient.CacheRefreshThread}（详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClient#discovery}）
          *          当shouldRegisterWithEureka=true，即Eureka CLient配置为注册到Eureka Server时
-         *              开启每30秒执行心跳续约的定时任务{@link DiscoveryClient.HeartbeatThread}（详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClien#renew}）
+         *              开启每30秒执行心跳续约的定时任务{@link DiscoveryClient.HeartbeatThread}（详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClient#renew}）
          *              {@link InstanceInfoReplicator#InstanceInfoReplicator(DiscoveryClient, InstanceInfo, int, int)}创建实例信息复制器
          *              {@link ApplicationInfoManager.StatusChangeListener}创建实例状态变化监听
          *              {@link ApplicationInfoManager#registerStatusChangeListener(ApplicationInfoManager.StatusChangeListener)}注册实例状态变化监听
@@ -218,19 +222,27 @@ public class EurekaCommon {
          *                      {@link AbstractJerseyEurekaHttpClient#getDelta(String...)}发起增量获取请求
          *                      当增量为空时则全量刷新一次
          *                      当增量不为空时将增量合并到本地缓存
-         *                          {@link DiscoveryClient#updateDelta(Applications)}
-         *                          {@link DiscoveryClient#getReconcileHashCode(Applications)}计算hashCode
-         *                          {@link DiscoveryClient#reconcileAndLogDifference(Applications, String)}
+         *                          {@link DiscoveryClient#updateDelta(Applications)}将增量合并到本地缓存并清除非UP状态的实例
+         *                          {@link DiscoveryClient#getReconcileHashCode(Applications)}合并计算hashCode
+         *                          {@link DiscoveryClient#reconcileAndLogDifference(Applications, String)}当合并后的hashcode与返回的hashcode不一致时重新全量获取
          *                  {@link DiscoveryClient#onCacheRefreshed()}发布缓存刷新事件
          *                  {@link DiscoveryClient#updateInstanceRemoteStatus()}更新本地应用状态
          *              {@link DiscoveryClient#lastSuccessfulRegistryFetchTimestamp} 将lastSuccessfulRegistryFetchTimestamp最后一次服务获取时间设置为当前时间
          * 三、Eureka Server处理请求
-         * {@link ApplicationsResource#getContainers(String, String, String,String, javax.ws.rs.core.UriInfo, String)}
-         *      {@link ResponseCacheImpl#getGZIP(com.netflix.eureka.registry.Key)}
+         * {@link ApplicationsResource#getContainers(String, String, String,String, UriInfo, String)}全量刷新请求
+         *      {@link PeerAwareInstanceRegistryImpl#shouldAllowAccess(boolean)}判断是否可以访问
+         *      {@link Key#Key(EntityType, String, KeyType, Version, EurekaAccept, String[])}构建获取全量缓存key（ALL_APPS）
+         *      {@link ResponseCacheImpl#getGZIP(Key)}从三级缓存中获取全量缓存
+         *      {@link AbstractInstanceRegistry#getApplications()}当二、三及缓存不存在时从一级缓存获取全量信息
+         *  {@link ApplicationsResource#getContainerDifferential(String, String, String, String, UriInfo, String)}增量刷新请求
+         *      {@link Key#Key(EntityType, String, KeyType, Version, EurekaAccept, String[])}构建获取增量缓存key（ALL_APPS_DELTA ）
+         *      {@link ResponseCacheImpl#getGZIP(Key)}从三级缓存中获取全量缓存
+         *      {@link AbstractInstanceRegistry#getApplicationDeltas()}当二、三及缓存不存在时从一级缓存获取增量信息
+         *          {@link AbstractInstanceRegistry#recentlyChangedQueue}从租约变更记录队列获取近期产生过变化（注册、下线、过期等）的应用实例信息（默认保存3分钟）
          * 四、Eureka Client发起远程调用
-         *      {@link DynamicServerListLoadBalancer#updateListOfServers()}
-         *          {@link DiscoveryEnabledNIWSServerList#getUpdatedListOfServers()} >> {@link DiscoveryEnabledNIWSServerList#obtainServersViaDiscovery()}
-         *              {@link DiscoveryClient#getInstancesByVipAddress(java.lang.String, boolean, java.lang.String)}
+         *      {@link DynamicServerListLoadBalancer#updateListOfServers()}更新服务列表
+         *          {@link DiscoveryEnabledNIWSServerList#getUpdatedListOfServers()} >> {@link DiscoveryEnabledNIWSServerList#obtainServersViaDiscovery()}获取服务列表
+         *              {@link DiscoveryClient#getInstancesByVipAddress(String, boolean, String)}
          *                  {@link this.localRegionApps.get()}
          */
         public void discovery() throws Exception {
