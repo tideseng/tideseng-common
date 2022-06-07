@@ -3,14 +3,13 @@ package com.tideseng.springcloud;
 import com.netflix.client.config.*;
 import com.netflix.loadbalancer.*;
 
-import com.netflix.servo.monitor.BasicCounter;
 import org.springframework.beans.factory.*;
 import org.springframework.beans.factory.annotation.*;
 import org.springframework.boot.web.client.*;
 import org.springframework.cloud.client.*;
 import org.springframework.cloud.client.loadbalancer.*;
 import org.springframework.cloud.client.loadbalancer.RestTemplateCustomizer;
-import org.springframework.cloud.context.named.NamedContextFactory;
+import org.springframework.cloud.context.named.*;
 import org.springframework.cloud.netflix.ribbon.*;
 import org.springframework.context.*;
 import org.springframework.context.annotation.*;
@@ -112,7 +111,6 @@ public class RibbonCommon {
      * {@link RibbonLoadBalancerClient#getServer(ILoadBalancer, Object)}
      *      {@link ZoneAwareLoadBalancer#chooseServer(Object)} 调用ILoadBalancer实现类的chooseServer方法（默认为ZoneAwareLoadBalancer，继承自BaseLoadBalancer，Object为null时设置为"default"）
      *          {@link BaseLoadBalancer#chooseServer(Object)}
-     *              {@link BasicCounter#increment()}计数
      *              {@link PredicateBasedRule#choose(Object)} 调用IRule实现类的choose方法（默认为ZoneAvoidanceRule，继承自PredicateBasedRule）
      *                  {@link AbstractLoadBalancerRule#getLoadBalancer()}获取负载均衡器
      *                  {@link BaseLoadBalancer#getAllServers()}根据负载均衡器获取所有服务列表
