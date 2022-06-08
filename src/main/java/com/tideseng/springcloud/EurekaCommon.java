@@ -38,7 +38,7 @@ import javax.ws.rs.core.*;
  *      引入第三方服务注册中心节点，其它服务将地址提交给第三方，使其管理所有的服务地址，服务调用者从第三方获取服务提供者地址列表
  * Eureka功能:
  *      Eureka Server端功能：服务启动、服务同步、服务剔除、自我保护、三级缓存
- *      Eureka Client端功能：服务启动、服务注册、服务续约、服务下线
+ *      Eureka Client端功能：服务启动、服务注册、服务续约、服务发现、服务下线
  * 注册中心差异点:
  *      高可用机制（CAP特性、一致性问题）
  *      API调用方式
@@ -112,7 +112,7 @@ public class EurekaCommon {
     }
 
     /**
-     * Eureka Client端功能：服务启动、服务注册、服务续约、服务下线
+     * Eureka Client端功能：服务启动、服务注册、服务续约、服务发现、服务下线
      */
     class EurekaClient {
 
@@ -254,6 +254,33 @@ public class EurekaCommon {
             // 正常下线同上
             // 非正常下线无限趋近于240s
             // server 每60s清理超过90s未续约得服务 60 + 90 + 90
+        }
+
+        /**
+         * 服务下线
+         * 一、Eureka Client发起下线
+         * {@link DiscoveryClient#shutdown()}对象销毁时触发下线（@PreDestroy修饰）
+         *      {@link ApplicationInfoManager#unregisterStatusChangeListener(String)}注销实例状态变化监听
+         *      {@link DiscoveryClient#cancelScheduledTasks()}取消定时任务（心跳续约、缓存刷新等）
+         *      {@link ApplicationInfoManager#setInstanceStatus(InstanceStatus)}设置实例状态为DOWN
+         *      {@link DiscoveryClient#unregister()}执行下线逻辑
+         *          {@link AbstractJerseyEurekaHttpClient#cancel(String, String)}发起下线请求
+         * 二、Eureka Server处理请求
+         * {@link InstanceResource#cancelLease(String)}处理下线请求
+         *      {@link InstanceRegistry#cancel(String, String, boolean)}服务下线
+         *          {@link InstanceRegistry#handleCancelation(String, String, boolean)}发布下线事件
+         *          {@link PeerAwareInstanceRegistryImpl#cancel(String, String, boolean)}服务下线
+         *              {@link AbstractInstanceRegistry#cancel(String, String, boolean)} >> {@link AbstractInstanceRegistry#internalCancel(String, String, boolean)}服务下线
+         *                  {@link EurekaMonitors#increment(boolean)}增加下线次数
+         *                  {@link registry.get(appName).remove(id)}从一级缓存移除实例信息
+         *                  {@link Lease#cancel()}设置下线时间
+         *                  {@link InstanceInfo#setActionType(ActionType)}设置操作类型、添加近期更变记录、更新最后操作时间、清除缓存
+         *              {@link PeerAwareInstanceRegistryImpl#replicateToPeers(PeerAwareInstanceRegistryImpl.Action, String, String, InstanceInfo, InstanceStatus, boolean)}集群同步
+         *              {@link AbstractInstanceRegistry#updateRenewsPerMinThreshold()}更新自我保护阈值
+         */
+        public void cancel() throws Exception {
+            DiscoveryClient discoveryClient = new DiscoveryClient(null, null, null, null);
+            discoveryClient.shutdown();
         }
 
     }
