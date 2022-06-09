@@ -4,6 +4,7 @@ import com.netflix.appinfo.*;
 import com.netflix.appinfo.InstanceInfo.*;
 import com.netflix.discovery.*;
 import com.netflix.discovery.shared.*;
+import com.netflix.discovery.shared.Application;
 import com.netflix.discovery.shared.resolver.*;
 import com.netflix.discovery.shared.transport.jersey.*;
 import com.netflix.eureka.*;
@@ -12,9 +13,12 @@ import com.netflix.eureka.lease.Lease;
 import com.netflix.eureka.registry.*;
 import com.netflix.eureka.registry.Key.*;
 import com.netflix.eureka.resources.*;
+import com.netflix.eureka.transport.JerseyReplicationClient;
 import com.netflix.eureka.util.*;
+import com.netflix.eureka.util.batcher.*;
 import com.netflix.loadbalancer.*;
 import com.netflix.niws.loadbalancer.*;
+import com.netflix.eureka.cluster.protocol.*;
 
 import org.springframework.cloud.netflix.eureka.*;
 import org.springframework.cloud.netflix.eureka.server.*;
@@ -73,7 +77,7 @@ public class EurekaCommon {
          *      {@link EurekaServerInitializerConfiguration#start()}异步启动Eureka Server >> {@link EurekaServerBootstrap#contextInitialized(ServletContext)}启动Eureka Server
          *          {@link EurekaServerBootstrap#initEurekaEnvironment()}初始化Eureka的环境变量
          *          {@link EurekaServerBootstrap#initEurekaServerContext()}启动Eureka Server
-         *              {@link PeerAwareInstanceRegistryImpl#syncUp()}从相邻的Eureka Server节点复制注册表
+         *              {@link PeerAwareInstanceRegistryImpl#syncUp()}从相邻的Eureka Server节点复制注册表【详见{@link EurekaServer#syncUp()}】
          *              {@link InstanceRegistry#openForTraffic(ApplicationInfoManager, int)}表示可以开始接收请求 >> {@link PeerAwareInstanceRegistryImpl#openForTraffic(ApplicationInfoManager, int)}
          *                  {@link AbstractInstanceRegistry#expectedNumberOfClientsSendingRenews}修改expectedNumberOfClientsSendingRenews值 >> {@link AbstractInstanceRegistry#updateRenewsPerMinThreshold()}更新每分钟续约因子阈值 >> {@link ApplicationInfoManager#setInstanceStatus(InstanceStatus)}设置Eureka节点状态为UP >>
          *                  {@link AbstractInstanceRegistry#postInit()}开启每隔60秒的剔除定时任务
@@ -109,6 +113,47 @@ public class EurekaCommon {
             peerAwareInstanceRegistry.openForTraffic(null, registryCount);
         }
 
+        /**
+         * 服务同步
+         * 一、启动时发起同步（实际上只有当shouldRegisterWithEureka=true && shouldFetchRegistry=true时服务同步才会生效）
+         * {@link PeerAwareInstanceRegistryImpl#syncUp()}从相邻的Eureka Server节点复制注册表（实际上是Eureka Server端作为客户端从相邻的Server节点获取服务信息后，该Eureka Server节点从该客户端的localRegionApps本地缓存中获取Applications信息）
+         *      {@link DiscoveryClient#getApplications()}从localRegionApps本地缓存中获取Applications注册信息
+         *      {@link PeerAwareInstanceRegistryImpl#isRegisterable(InstanceInfo)}遍历所有服务实例，检查实例是否可以注册
+         *      {@link InstanceRegistry#register(InstanceInfo, int, boolean)} >> {@link AbstractInstanceRegistry#register(InstanceInfo, int, boolean)}服务注册【详见服务注册--Eureka Server存储服务地址】
+         * 二、变更时发起同步（集群同步变更类型：Register注册、Heartbeat心跳续约、Cancel下线、StatusUpdate设置覆盖状态、DeleteStatusOverride删除覆盖状态操作后，默认固定间隔500毫秒向集群其它Eureka Server节点同步）
+         * {@link PeerAwareInstanceRegistryImpl#replicateToPeers(PeerAwareInstanceRegistryImpl.Action, String, String, InstanceInfo, InstanceStatus, boolean)}
+         *      {@link PeerAwareInstanceRegistryImpl#peerEurekaNodes}判断集群节点是否为空，为空则返回
+         *      判断isReplication是否为其它Eureka Server端发起的复制请求，是则不进行集群同步，避免同步死循环
+         *      {@link PeerEurekaNodes#isThisMyUrl(String)}遍历集群节点，并过滤自身的节点
+         *      {@link PeerAwareInstanceRegistryImpl#replicateInstanceActionsToPeers(PeerAwareInstanceRegistryImpl.Action, String, String, InstanceInfo, InstanceStatus, PeerEurekaNode)}发起服务同步请求
+         *          {@link PeerEurekaNode#register(InstanceInfo)}处理注册同步操作（默认采用批量任务处理器，将同步任务放入任务队列中，通过线程获取队列里的任务，统一批量执行）
+         *              {@link InstanceReplicationTask#InstanceReplicationTask(String, PeerAwareInstanceRegistryImpl.Action, InstanceInfo, InstanceStatus, boolean)}创建同步任务
+         *              {@link ReplicationTaskProcessor#process(List)}批量任务执行器处理批量任务
+         *                  {@link ReplicationTaskProcessor#createReplicationListOf(List)}创建批量同步操作请求对象
+         *                  {@link JerseyReplicationClient#submitBatchUpdates(ReplicationList)}发起批量同步操作请求
+         *                  {@link ReplicationTaskProcessor#handleBatchResponse(List, List)}循环调用处理结果
+         *                      {@link ReplicationTask#handleSuccess()}成功
+         *                      {@link ReplicationTask#handleFailure(int, Object)}失败
+         *          {@link PeerEurekaNode#heartbeat(String, String, InstanceInfo, InstanceStatus, boolean)}处理续约同步操作
+         *          {@link PeerEurekaNode#cancel(String, String)}处理下线同步操作
+         *          {@link PeerEurekaNode#statusUpdate(String, String, InstanceStatus, InstanceInfo)}处理设置覆盖状态同步操作
+         *          {@link PeerEurekaNode#deleteStatusOverride(String, String, InstanceInfo)}处理删除覆盖状态同步操作
+         */
+        public void syncUp() throws Exception {
+            PeerAwareInstanceRegistryImpl peerAwareInstanceRegistryImpl = new PeerAwareInstanceRegistryImpl(null, null, null, null);
+            int count = peerAwareInstanceRegistryImpl.syncUp();
+
+            CloudEurekaClient cloudEurekaClient = new CloudEurekaClient(null, null, null, null);
+            Applications apps = cloudEurekaClient.getApplications();
+            for (Application app : apps.getRegisteredApplications()) {
+                for (InstanceInfo instance : app.getInstances()) {
+                    if (peerAwareInstanceRegistryImpl.isRegisterable(instance)) {
+                        peerAwareInstanceRegistryImpl.register(instance, instance.getLeaseInfo().getDurationInSecs(), true);
+                    }
+                }
+            }
+        }
+
     }
 
     /**
@@ -127,12 +172,12 @@ public class EurekaCommon {
          *      当shouldRegisterWithEureka=false && shouldFetchRegistry=false，即Eureka CLient配置为不注册到Eureka Server且不从Eureka Server获取注册信息时，直接返回
          *      创建scheduler、heartbeatExecutor、cacheRefreshExecutor线程池，scheduler用于处理定时任务、heartbeatExecutor用于执行心跳续约、cacheRefreshExecutor用于刷新服务注册信息
          *      当shouldFetchRegistry=true，即Eureka CLient配置为从Eureka Server获取注册信息时
-         *          {@link DiscoveryClient#fetchRegistry(boolean)}全量获取服务注册信息（详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClient#discovery}）
+         *          {@link DiscoveryClient#fetchRegistry(boolean)}全量获取服务注册信息【详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClient#discovery}】
          *      {@link DiscoveryClient#initScheduledTasks()}初始化定时任务
          *          当shouldFetchRegistry=true，即Eureka CLient配置为从Eureka Server获取注册信息时
-         *              开启每30秒执行刷新服务注册信息的定时任务{@link DiscoveryClient.CacheRefreshThread}（详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClient#discovery}）
+         *              开启每30秒执行刷新服务注册信息的定时任务{@link DiscoveryClient.CacheRefreshThread}【详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClient#discovery}】
          *          当shouldRegisterWithEureka=true，即Eureka CLient配置为注册到Eureka Server时
-         *              开启每30秒执行心跳续约的定时任务{@link DiscoveryClient.HeartbeatThread}（详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClient#renew}）
+         *              开启每30秒执行心跳续约的定时任务{@link DiscoveryClient.HeartbeatThread}【详见{@link com.tideseng.springcloud.EurekaCommon.EurekaClient#renew}】
          *              {@link InstanceInfoReplicator#InstanceInfoReplicator(DiscoveryClient, InstanceInfo, int, int)}创建实例信息复制器
          *              {@link ApplicationInfoManager.StatusChangeListener}创建实例状态变化监听
          *              {@link ApplicationInfoManager#registerStatusChangeListener(ApplicationInfoManager.StatusChangeListener)}注册实例状态变化监听
@@ -148,7 +193,7 @@ public class EurekaCommon {
          *      {@link ApplicationResource#addInstance(InstanceInfo, String)}处理服务注册请求
          *          {@link InstanceRegistry#register(InstanceInfo, boolean)}服务注册 >> {@link PeerAwareInstanceRegistryImpl#register(InstanceInfo, boolean)}服务注册
          *              {@link AbstractInstanceRegistry#register(InstanceInfo, int, boolean)}服务注册逻辑
-         *              {@link PeerAwareInstanceRegistryImpl#replicateToPeers(PeerAwareInstanceRegistryImpl.Action, String, String, InstanceInfo, InstanceStatus, boolean)}服务同步逻辑（详见服务同步）
+         *              {@link PeerAwareInstanceRegistryImpl#replicateToPeers(PeerAwareInstanceRegistryImpl.Action, String, String, InstanceInfo, InstanceStatus, boolean)}服务同步逻辑【详见服务同步{@link EurekaServer#syncUp()}】
          * 三、Eureka Server存储服务地址
          *      {@link AbstractInstanceRegistry#register(InstanceInfo, int, boolean)}
          *          {@link ReentrantReadWriteLock.ReadLock#lock()}对读锁加锁
@@ -192,7 +237,7 @@ public class EurekaCommon {
          *                  {@link AbstractInstanceRegistry#getOverriddenInstanceStatus(InstanceInfo, Lease, boolean)}获取服务端实例的status（2.当服务端的instance的status为UNKONW时返回404让客户端重新发起注册）
          *                  {@link MeasuredRate#increment()}设置每分钟的续约次数
          *                  {@link Lease#renew()}更新lease续约时间
-         *              {@link PeerAwareInstanceRegistryImpl#replicateToPeers(PeerAwareInstanceRegistryImpl.Action, String, String, InstanceInfo, InstanceStatus, boolean)}服务同步逻辑（详见服务同步）
+         *              {@link PeerAwareInstanceRegistryImpl#replicateToPeers(PeerAwareInstanceRegistryImpl.Action, String, String, InstanceInfo, InstanceStatus, boolean)}服务同步逻辑【详见服务同步{@link EurekaServer#syncUp()}】
          *          {@link InstanceResource#validateDirtyTimestamp(Long, boolean)}验证客户端lastDirtyTimestamp和本地lastDirtyTimestamp
          *              {@link AbstractInstanceRegistry#getInstanceByAppAndId(String, String, boolean)}根据应用名和实例ID获取本地instance实例信息
          *              当lastDirtyTimestamp > appInfo.getLastDirtyTimestamp()时返回404让客户端重新发起注册（3）
@@ -275,7 +320,7 @@ public class EurekaCommon {
          *                  {@link registry.get(appName).remove(id)}从一级缓存移除实例信息
          *                  {@link Lease#cancel()}设置下线时间
          *                  {@link InstanceInfo#setActionType(ActionType)}设置操作类型、添加近期更变记录、更新最后操作时间、清除缓存
-         *              {@link PeerAwareInstanceRegistryImpl#replicateToPeers(PeerAwareInstanceRegistryImpl.Action, String, String, InstanceInfo, InstanceStatus, boolean)}集群同步
+         *              {@link PeerAwareInstanceRegistryImpl#replicateToPeers(PeerAwareInstanceRegistryImpl.Action, String, String, InstanceInfo, InstanceStatus, boolean)}集群同步逻辑【详见服务同步{@link EurekaServer#syncUp()}】
          *              {@link AbstractInstanceRegistry#updateRenewsPerMinThreshold()}更新自我保护阈值
          */
         public void cancel() throws Exception {
