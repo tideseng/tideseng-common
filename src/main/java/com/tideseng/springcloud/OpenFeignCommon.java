@@ -1,7 +1,10 @@
 package com.tideseng.springcloud;
 
+import com.netflix.client.*;
+
 import org.springframework.cloud.context.named.*;
 import org.springframework.cloud.openfeign.*;
+import com.netflix.client.config.*;
 
 import org.springframework.beans.factory.support.*;
 import org.springframework.cloud.openfeign.loadbalancer.*;
@@ -18,6 +21,7 @@ import feign.*;
 
 import java.lang.reflect.*;
 import java.util.*;
+import java.net.*;
 
 /**
  * 特点
@@ -66,7 +70,7 @@ public class OpenFeignCommon {
      *          {@link FeignClientFactoryBean#getOptional(FeignContext, Class)} >> {@link NamedContextFactory#getInstance(String, Class)}从上下文(子容器和父容器)中获取{@link LoadBalancerFeignClient}
      *          {@link DefaultTargeter#target(FeignClientFactoryBean, Builder, FeignContext, HardCodedTarget)} >> {@link Builder#target(Target)}
      *              {@link Builder#build()}构建ReflectiveFeign
-     *              {@link ReflectiveFeign#newInstance(Target)}
+     *              {@link ReflectiveFeign#newInstance(Target)}创建代理对象
      *                  {@link ReflectiveFeign.ParseHandlersByName#apply(Target)}
      *                  构建Map<Method, InvocationHandlerFactory.MethodHandler>结构的methodToHandler
      *                  {@link InvocationHandlerFactory.Default#create(Target, Map)}构建InvocationHandler
@@ -81,10 +85,17 @@ public class OpenFeignCommon {
      * 调用流程
      * {@link ReflectiveFeign.FeignInvocationHandler#invoke(Object, Method, Object[])}动态代理调用方法
      *      dispatch.get(method)获取method对应的MethodHandler
-     *      {@link SynchronousMethodHandler#invoke(Object[])}
-     *          {@link ReflectiveFeign.BuildTemplateByResolvingArgs#create(Object[])}构建RequestTemplate
-     *          {@link SynchronousMethodHandler#executeAndDecode(RequestTemplate, Options)}
-     *              {@link SynchronousMethodHandler#targetRequest(RequestTemplate)}执行Feign拦截器链
+     *      {@link SynchronousMethodHandler#invoke(Object[])}动态代理对象调用方法
+     *          {@link ReflectiveFeign.BuildTemplateByResolvingArgs#create(Object[])}根据参数生成RequestTemplate对象
+     *          {@link SynchronousMethodHandler#findOptions(Object[])}根据参数生成Options对象
+     *          {@link SynchronousMethodHandler#executeAndDecode(RequestTemplate, Options)}执行请求
+     *              {@link SynchronousMethodHandler#targetRequest(RequestTemplate)}先执行拦截器链，再通过RequestTemplate生成Request请求对象
+     *                  {@link RequestInterceptor#apply(RequestTemplate)}执行feing拦截器
+     *                  {@link HardCodedTarget#apply(RequestTemplate)}生成Request请求对象
+     *              {@link LoadBalancerFeignClient#execute(Request, Options)}执行请求，默认采用JDK的HttpURLConnection发起远程调用
+     *                  {@link FeignLoadBalancer.RibbonRequest#RibbonRequest(Client, Request, URI)}构建RibbonRequest
+     *                  {@link LoadBalancerFeignClient#lbClient(String)}获取或生成具有负载均衡的Feing（内部维护了Ribbon的IClientConfig、ILoadBalancer等）
+     *                  {@link AbstractLoadBalancerAwareClient#executeWithLoadBalancer(ClientRequest, IClientConfig)}根据负载均衡执行请求
      */
     public void invoke() {
 
@@ -99,6 +110,13 @@ public class OpenFeignCommon {
      *      feign.httpclient.enabled=false
      */
     public void optimize() {
+
+    }
+
+    /**
+     * 动态刷新
+     */
+    public void autoRefresh() {
 
     }
 
