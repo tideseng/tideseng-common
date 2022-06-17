@@ -10,6 +10,7 @@ import org.springframework.beans.factory.support.*;
 import org.springframework.cloud.openfeign.loadbalancer.*;
 import org.springframework.cloud.openfeign.ribbon.*;
 import org.springframework.cloud.openfeign.ribbon.*;
+import org.springframework.cloud.openfeign.support.SpringMvcContract;
 import org.springframework.context.annotation.*;
 import org.springframework.core.type.*;
 import org.springframework.beans.factory.config.*;
@@ -19,6 +20,7 @@ import feign.Target.*;
 import feign.Request.*;
 import feign.*;
 
+import java.lang.annotation.*;
 import java.lang.reflect.*;
 import java.util.*;
 import java.net.*;
@@ -65,14 +67,16 @@ public class OpenFeignCommon {
      *      import类{@link HttpClientFeignLoadBalancerConfiguration}、{@link OkHttpFeignLoadBalancerConfiguration}、{@link DefaultFeignLoadBalancerConfiguration}初始化Client
      * 三、FeignClient代理对象生成
      * {@link FeignClientFactoryBean#getObject()} >> {@link FeignClientFactoryBean#getTarget()}生成代理对象
-     *      {@link FeignClientFactoryBean#feign(FeignContext)}构建Feign的Builder对象，会调用configureFeign方法从上下文、默认配置、自定义配置中设置FeignClient属性
+     *      {@link FeignClientFactoryBean#feign(FeignContext)}【通过建造者模式构建Feign.Builder对象，动态配置各个组件】
+     *          {@link FeignClientFactoryBean#configureFeign(FeignContext, Builder)}从上下文、默认配置、自定义配置中设置Builder
      *      {@link FeignClientFactoryBean#loadBalance(Builder, FeignContext, HardCodedTarget)}当url为空时
      *          {@link FeignClientFactoryBean#getOptional(FeignContext, Class)} >> {@link NamedContextFactory#getInstance(String, Class)}从上下文(子容器和父容器)中获取{@link LoadBalancerFeignClient}
-     *          {@link DefaultTargeter#target(FeignClientFactoryBean, Builder, FeignContext, HardCodedTarget)} >> {@link Builder#target(Target)}
-     *              {@link Builder#build()}构建ReflectiveFeign
+     *          {@link DefaultTargeter#target(FeignClientFactoryBean, Builder, FeignContext, HardCodedTarget)} >> {@link Builder#target(Target)}【通过动态代理模式生成实际发起请求的代理对象】
+     *              {@link Builder#build()}构建Feign的实例ReflectiveFeign
      *              {@link ReflectiveFeign#newInstance(Target)}创建代理对象
      *                  {@link ReflectiveFeign.ParseHandlersByName#apply(Target)}
      *                  构建Map<Method, InvocationHandlerFactory.MethodHandler>结构的methodToHandler
+     *                      {@link SpringMvcContract#processAnnotationOnMethod(feign.MethodMetadata, Annotation, Method)}
      *                  {@link InvocationHandlerFactory.Default#create(Target, Map)}构建InvocationHandler
      *                      {@link ReflectiveFeign.FeignInvocationHandler#FeignInvocationHandler(Target, Map)}
      *                  {@link Proxy#newProxyInstance(ClassLoader, Class[], InvocationHandler)}动态代理生成对象
@@ -88,14 +92,15 @@ public class OpenFeignCommon {
      *      {@link SynchronousMethodHandler#invoke(Object[])}动态代理对象调用方法
      *          {@link ReflectiveFeign.BuildTemplateByResolvingArgs#create(Object[])}根据参数生成RequestTemplate对象
      *          {@link SynchronousMethodHandler#findOptions(Object[])}根据参数生成Options对象
-     *          {@link SynchronousMethodHandler#executeAndDecode(RequestTemplate, Options)}执行请求
+     *          {@link SynchronousMethodHandler#executeAndDecode(RequestTemplate, Options)}执行请求，先通过RequestTemplate生成Request请求对象，再调用Client对象发起请求获取response响应信息
      *              {@link SynchronousMethodHandler#targetRequest(RequestTemplate)}先执行拦截器链，再通过RequestTemplate生成Request请求对象
      *                  {@link RequestInterceptor#apply(RequestTemplate)}执行feing拦截器
      *                  {@link HardCodedTarget#apply(RequestTemplate)}生成Request请求对象
      *              {@link LoadBalancerFeignClient#execute(Request, Options)}执行请求，默认采用JDK的HttpURLConnection发起远程调用
      *                  {@link FeignLoadBalancer.RibbonRequest#RibbonRequest(Client, Request, URI)}构建RibbonRequest
-     *                  {@link LoadBalancerFeignClient#lbClient(String)}获取或生成具有负载均衡的Feing（内部维护了Ribbon的IClientConfig、ILoadBalancer等）
+     *                  {@link LoadBalancerFeignClient#lbClient(String)}获取或生成具有负载均衡的Feign（内部维护了Ribbon的IClientConfig、ILoadBalancer等）
      *                  {@link AbstractLoadBalancerAwareClient#executeWithLoadBalancer(ClientRequest, IClientConfig)}根据负载均衡执行请求
+     *                      {@link Client.Default#execute(Request, Options)}Feign默认Client的真正执行逻辑，使用了HttpURLConnection的方式来进行请求，并没有使用对象池技术，所以性能较低，在实际工作中推荐使用Okhttp3作为请求连接池，但要注意的是Okhttp3的连接初始化默认只有5个，需要按需设置
      */
     public void invoke() {
 
