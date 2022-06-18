@@ -26,14 +26,23 @@ import java.util.*;
 import java.net.*;
 
 /**
+ * Feign与OpenFeign比较
+ *      OpenFeign利用了Feign的高扩展性，使用标准的Spring Web MVC来声明客户端接口
+ *      Feign
+ *          注解扩展性
+ *          REST请求元信息解析
+ *          HTTP请求处理
+ *      OpenFeign
+ *          提供Spring Web MVC注解解析
+ *          提供Feign自动装配
  * 特点
  *      基于接口注解的方式实现远程通信
  *      屏蔽底层细节
  * 实现
- * 参数的解析和装载
- * 针对指定的FeginClient生成动态代理
- * 针对FeignClient中的方法描述进行解析
- * 组装出一个Request对象，发起请求
+ *      参数的解析和装载
+ *      针对指定的FeginClient生成动态代理
+ *      针对FeignClient中的方法描述进行解析
+ *      组装出一个Request对象，发起请求
  */
 public class OpenFeignCommon {
 
