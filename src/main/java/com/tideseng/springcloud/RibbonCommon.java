@@ -212,6 +212,10 @@ public class RibbonCommon {
         ribbonLoadBalancerClient.execute(serviceId, ribbonServer, request);
     }
 
+    public void interceptor() throws Exception {
+
+    }
+
     public void RetryTemplate() throws Exception {
 
     }
