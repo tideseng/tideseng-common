@@ -26,10 +26,10 @@ public class FeignClientRequestInterceptor implements RequestInterceptor {
             return;
         }
 
-        // 设置header头信息，如：添加令牌信息
+        // 设置header头信息，如：添加令牌信息（令牌信息可直接从Request的请求头中获取，或从缓存中获取客户端令牌信息）
         template.header("Authorization", "Bearer xxx");
 
-        // 设置header头信息（拷贝原Request的请求头信息）
+        // 设置header头信息（拷贝原Request的请求头信息，如：令牌信息等）
         HttpServletRequest request = attributes.getRequest();
         Enumeration<String> headerNames = request.getHeaderNames();
         if (headerNames != null) {
@@ -40,7 +40,7 @@ public class FeignClientRequestInterceptor implements RequestInterceptor {
             }
         }
 
-        // 设置Body体
+        // 设置Body体，用于统一扩展Body体（实现效果同InstanceFeignClientInterceptorBodyConfig）
         String method = template.method();
         if (template.requestBody().asBytes() != null) {
             int length = template.requestBody().asBytes().length;
@@ -58,7 +58,7 @@ public class FeignClientRequestInterceptor implements RequestInterceptor {
             }
         }
 
-        // 设置param参数
+        // 设置param参数，用于扩展param请求参数
         Map<String, Collection<String>> queries = template.queries();
         if (queries != null) {
             Map<String, Collection<String>> newQueries = new HashMap<>();
