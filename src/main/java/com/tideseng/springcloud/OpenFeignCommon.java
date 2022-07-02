@@ -43,6 +43,8 @@ import java.net.*;
  *      针对指定的FeginClient生成动态代理
  *      针对FeignClient中的方法描述进行解析
  *      组装出一个Request对象，发起请求
+ * 注意
+ *      Feign容易对特殊字符的参数出现编码解码问题、异步请求获取原请求信息失败问题
  */
 public class OpenFeignCommon {
 
