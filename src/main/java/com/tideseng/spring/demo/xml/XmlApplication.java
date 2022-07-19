@@ -1,5 +1,6 @@
 package com.tideseng.spring.demo.xml;
 
+import com.tideseng.spring.demo.xml.constructor.ConstructorArgBean;
 import com.tideseng.spring.demo.xml.lookup.AbstractPay;
 import com.tideseng.spring.demo.xml.replace.OrderApi;
 import org.junit.Test;
@@ -34,6 +35,13 @@ public class XmlApplication {
         OrderApi orderApi = applicationContext.getBean(OrderApi.class);
         System.out.println(orderApi.toOrder(1L));
         System.out.println(orderApi.toOrder(Arrays.asList(1L, 2L)));
+    }
+
+    @Test
+    public void constructor() {
+        ClassPathXmlApplicationContext applicationContext = new ClassPathXmlApplicationContext("spring/04spring-constructor.xml");
+        ConstructorArgBean constructorArgBean = applicationContext.getBean(ConstructorArgBean.class);
+        System.out.println(constructorArgBean);
     }
 
 }
