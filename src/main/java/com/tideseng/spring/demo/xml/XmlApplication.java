@@ -44,4 +44,11 @@ public class XmlApplication {
         System.out.println(constructorArgBean);
     }
 
+    @Test
+    public void property() {
+        ClassPathXmlApplicationContext applicationContext = new ClassPathXmlApplicationContext("spring/05spring-property.xml");
+        Student student = applicationContext.getBean(Student.class);
+        System.out.println(student.getUsername());
+    }
+
 }
