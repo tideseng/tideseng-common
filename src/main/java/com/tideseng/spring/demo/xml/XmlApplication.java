@@ -1,6 +1,7 @@
 package com.tideseng.spring.demo.xml;
 
 import com.tideseng.spring.demo.xml.constructor.ConstructorArgBean;
+import com.tideseng.spring.demo.xml.context.ContextBean;
 import com.tideseng.spring.demo.xml.lookup.AbstractPay;
 import com.tideseng.spring.demo.xml.replace.OrderApi;
 import org.junit.Test;
@@ -49,6 +50,13 @@ public class XmlApplication {
         ClassPathXmlApplicationContext applicationContext = new ClassPathXmlApplicationContext("spring/05spring-property.xml");
         Student student = applicationContext.getBean(Student.class);
         System.out.println(student.getUsername());
+    }
+
+    @Test
+    public void context() {
+        ClassPathXmlApplicationContext applicationContext = new ClassPathXmlApplicationContext("spring/06spring-context.xml");
+        ContextBean contextBean = applicationContext.getBean(ContextBean.class);
+        System.out.println(contextBean);
     }
 
 }
