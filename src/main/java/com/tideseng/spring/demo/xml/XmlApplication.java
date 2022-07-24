@@ -1,7 +1,7 @@
 package com.tideseng.spring.demo.xml;
 
+import com.tideseng.spring.demo.xml.componentScan.ComponentScanBean;
 import com.tideseng.spring.demo.xml.constructor.ConstructorArgBean;
-import com.tideseng.spring.demo.xml.context.ContextBean;
 import com.tideseng.spring.demo.xml.lookup.AbstractPay;
 import com.tideseng.spring.demo.xml.replace.OrderApi;
 import org.junit.Test;
@@ -53,10 +53,10 @@ public class XmlApplication {
     }
 
     @Test
-    public void context() {
-        ClassPathXmlApplicationContext applicationContext = new ClassPathXmlApplicationContext("spring/06spring-context.xml");
-        ContextBean contextBean = applicationContext.getBean(ContextBean.class);
-        System.out.println(contextBean);
+    public void componentScan() {
+        ClassPathXmlApplicationContext applicationContext = new ClassPathXmlApplicationContext("spring/06spring-componentScan.xml");
+        ComponentScanBean bean = applicationContext.getBean(ComponentScanBean.class);
+        System.out.println(bean);
     }
 
 }

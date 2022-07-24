@@ -1,11 +1,11 @@
-package com.tideseng.spring.demo.xml.context;
+package com.tideseng.spring.demo.xml.componentScan;
 
 import lombok.Data;
 import org.springframework.stereotype.Component;
 
 @Data
 @Component
-public class ContextBean {
+public class ComponentScanBean {
 
     private String username = "章佳欢";
 
