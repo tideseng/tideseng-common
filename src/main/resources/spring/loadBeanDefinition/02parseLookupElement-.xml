@@ -13,10 +13,12 @@
 	http://www.springframework.org/schema/aop/spring-aop-3.2.xsd"
     default-lazy-init="false">
 
-    <bean id="aliAccount" class="com.tideseng.spring.demo.xml.lookup.AliAccount"/>
+    <bean id="aliAccount" class="com.tideseng.spring.demo.xml.loadBeanDefinition.parseDefaultElement.lookup.AliAccount"/>
 
-    <bean id="abstractPay" class="com.tideseng.spring.demo.xml.lookup.AbstractPay">
-        <lookup-method name="getAccount" bean="aliAccount"></lookup-method>
+    <bean id="weixinAccount" class="com.tideseng.spring.demo.xml.loadBeanDefinition.parseDefaultElement.lookup.WeixinAccount"/>
+
+    <bean id="abstractPay" class="com.tideseng.spring.demo.xml.loadBeanDefinition.parseDefaultElement.lookup.AbstractPay">
+        <lookup-method name="getAccount" bean="weixinAccount"></lookup-method>
     </bean>
 
 </beans>
