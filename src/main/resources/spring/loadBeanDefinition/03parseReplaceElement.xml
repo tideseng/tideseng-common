@@ -13,9 +13,9 @@
 	http://www.springframework.org/schema/aop/spring-aop-3.2.xsd"
     default-lazy-init="false">
 
-    <bean id="v2OrderApi" class="com.tideseng.spring.demo.xml.replace.V2OrderApi"/>
+    <bean id="v2OrderApi" class="com.tideseng.spring.demo.xml.loadBeanDefinition.parseDefaultElement.replace.V2OrderApi"/>
 
-    <bean id="orderApi" class="com.tideseng.spring.demo.xml.replace.OrderApi">
+    <bean id="orderApi" class="com.tideseng.spring.demo.xml.loadBeanDefinition.parseDefaultElement.replace.OrderApi">
         <replaced-method name="toOrder" replacer="v2OrderApi">
             <arg-type match="java.lang.Long"/>
         </replaced-method>
