@@ -13,9 +13,6 @@
 	http://www.springframework.org/schema/aop/spring-aop-3.2.xsd"
     default-lazy-init="false">
 
-    <bean id="constructorArgBean" class="com.tideseng.spring.demo.xml.constructor.ConstructorArgBean">
-        <constructor-arg name="username" value="章佳欢" index="0" type="java.lang.String"/>
-        <constructor-arg name="password" value="何鑫" index="1" type="java.lang.String"/>
-    </bean>
+    <context:component-scan base-package="com.tideseng.spring.demo.xml.loadBeanDefinition.parseCustomElement.componentScan"></context:component-scan>
 
 </beans>
